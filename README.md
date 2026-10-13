@@ -3,8 +3,8 @@
 Ambiente de desenvolvimento em C com OpenMPI para a implementação paralela do
 Crivo de Eratóstenes usando o modelo mestre-escravo.
 
-Nesta etapa, o projeto contém apenas programas mínimos para validar a compilação
-de código C sequencial, a compilação com `mpicc` e a execução com `mpirun`.
+Nesta etapa, o projeto contém a implementação sequencial do Crivo de
+Eratóstenes. A versão paralela com MPI ainda será desenvolvida.
 
 ## Requisitos
 
@@ -31,7 +31,7 @@ docker compose run --rm dev
 
 ## Compilação
 
-Compile os exemplos sequencial e MPI:
+Compile a versão sequencial:
 
 ```bash
 docker compose run --rm dev make
