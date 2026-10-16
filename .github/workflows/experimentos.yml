@@ -1,0 +1,76 @@
+name: Experimentos MPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      limites:
+        description: "Limites separados por espaço; vazio usa a série completa"
+        required: false
+        type: string
+      processos:
+        description: "Quantidades de processos MPI separadas por espaço"
+        required: true
+        default: "2 3 4 6 8 12"
+        type: string
+      repeticoes:
+        description: "Repetições por configuração"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimentos-mpi
+  cancel-in-progress: false
+
+jobs:
+  executar:
+    name: Executar experimentos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v7
+
+      - name: Instalar OpenMPI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc \
+            libopenmpi-dev \
+            make \
+            openmpi-bin
+
+      - name: Executar série de experimentos
+        id: experimentos
+        env:
+          LIMITES: ${{ inputs.limites }}
+          PROCESSOS: ${{ inputs.processos }}
+          REPETICOES: ${{ inputs.repeticoes }}
+        run: bash scripts/executar_experimentos.sh
+
+      - name: Gerar relatório final
+        if: always()
+        env:
+          STATUS_EXECUCAO: ${{ steps.experimentos.outcome }}
+        run: bash scripts/gerar_relatorio.sh
+
+      - name: Publicar resumo da execução
+        if: always()
+        run: cat resultados/resumo_execucao.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Armazenar resultados
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: resultados-mpi-${{ github.run_id }}
+          path: |
+            resultados/sequencial/execucoes.csv
+            resultados/paralelo/execucoes.csv
+            resultados/resumo_execucao.md
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 9

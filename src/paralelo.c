@@ -421,6 +421,16 @@ static int criar_diretorio_resultados(void)
 }
 
 /**
+ * Mantem a lista de primos nas execucoes comuns e permite omiti-la nos testes.
+ */
+static bool deve_salvar_primos(void)
+{
+    const char *valor = getenv("SALVAR_PRIMOS");
+
+    return valor == NULL || *valor != '0';
+}
+
+/**
  * Escreve a lista final de primos, mantendo a ordem dos blocos.
  */
 static int salvar_primos(
@@ -557,11 +567,15 @@ static int executar_mestre(
     for (int indice = 0; indice < quantidade_escravos; indice++)
         quantidade_total += quantidades_primos[indice];
 
-    int status = salvar_primos(
-        listas_primos,
-        quantidades_primos,
-        quantidade_escravos
-    );
+    int status = EXIT_SUCCESS;
+
+    if (deve_salvar_primos()) {
+        status = salvar_primos(
+            listas_primos,
+            quantidades_primos,
+            quantidade_escravos
+        );
+    }
 
     if (status == EXIT_SUCCESS) {
         printf("Quantidade de primos ate %d: %d\n", limite, quantidade_total);
