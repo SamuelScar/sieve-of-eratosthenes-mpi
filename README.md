@@ -1,10 +1,8 @@
 # crivo-eratostenes-mpi
 
-Ambiente de desenvolvimento em C com OpenMPI para a implementação paralela do
-Crivo de Eratóstenes usando o modelo mestre-escravo.
-
-Nesta etapa, o projeto contém a implementação sequencial do Crivo de
-Eratóstenes. A versão paralela com MPI ainda será desenvolvida.
+Implementações sequencial e paralela do Crivo de Eratóstenes em C. A versão
+paralela utiliza OpenMPI e o modelo mestre-escravo para dividir o intervalo em
+blocos contínuos.
 
 ## Requisitos
 
@@ -31,13 +29,46 @@ docker compose run --rm dev
 
 ## Compilação
 
-Compile a versão sequencial:
+Compile as versões sequencial e paralela:
 
 ```bash
 docker compose run --rm dev make
 ```
 
 Os executáveis são gerados na pasta `bin/`.
+
+Execute a versão sequencial:
+
+```bash
+docker compose run --rm dev make run-sequential N=100
+```
+
+Execute a versão paralela com quatro processos, sendo um mestre e três
+escravos:
+
+```bash
+docker compose run --rm dev make run NP=4 N=100
+```
+
+A versão paralela grava os números primos encontrados no arquivo
+`resultados/paralelo/primos.txt`, com um número por linha.
+
+## Resultados
+
+Cada execução acrescenta uma linha ao arquivo correspondente:
+
+- `resultados/sequencial/execucoes.csv` para a versão sequencial;
+- `resultados/paralelo/execucoes.csv` para a versão paralela.
+
+Os dois arquivos utilizam as mesmas colunas:
+
+- limite;
+- quantidade de processos;
+- quantidade de primos;
+- tempo em segundos.
+
+A gravação dos arquivos acontece depois da medição e, portanto, não interfere
+no tempo registrado.
 
 ## Limpeza
 

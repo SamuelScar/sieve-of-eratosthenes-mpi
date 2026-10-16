@@ -6,13 +6,13 @@ PROFILE_FLAGS := -pg
 
 BIN_DIR := bin
 SEQUENTIAL_BIN := $(BIN_DIR)/sequencial
-MPI_BIN := $(BIN_DIR)/mpi_example
+MPI_BIN := $(BIN_DIR)/paralelo
 NP ?= 4
 N ?= 100
 
 .PHONY: all run run-sequential profile clean
 
-all: $(SEQUENTIAL_BIN)
+all: $(SEQUENTIAL_BIN) $(MPI_BIN)
 
 $(BIN_DIR):
 	mkdir -p $@
@@ -20,11 +20,11 @@ $(BIN_DIR):
 $(SEQUENTIAL_BIN): src/sequencial.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@
 
-$(MPI_BIN): src/mpi_example.c | $(BIN_DIR)
-	$(MPICC) $(CFLAGS) $< -o $@
+$(MPI_BIN): src/paralelo.c | $(BIN_DIR)
+	$(MPICC) $(CFLAGS) $< -o $@ -lm
 
 run: $(MPI_BIN)
-	mpirun --allow-run-as-root -np $(NP) $(MPI_BIN)
+	mpirun --allow-run-as-root --oversubscribe -np $(NP) $(MPI_BIN) $(N)
 
 run-sequential: $(SEQUENTIAL_BIN)
 	$(SEQUENTIAL_BIN) $(N)
