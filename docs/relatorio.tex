@@ -1,0 +1,278 @@
+\documentclass[12pt,a4paper]{article}
+
+% ==========================================
+% PACOTES
+% ==========================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{newtxtext,newtxmath}
+\usepackage{setspace}
+\usepackage[
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue
+]{hyperref}
+
+\geometry{a4paper, margin=2cm}
+\onehalfspacing
+
+% ==========================================
+% DOCUMENTO
+% ==========================================
+
+\begin{document}
+\pagenumbering{gobble}
+
+% ==========================================
+% CAPA
+% ==========================================
+
+\begin{titlepage}
+    \centering
+
+    {\large Universidade Federal de São João del-Rei -- UFSJ}\\
+    {\large Departamento de Ciência da Computação -- DCOMP}\\
+    {\large Computação Paralela}\\
+
+    \vspace*{5cm}
+
+    {\Large
+        \textbf{\MakeUppercase{Paralelização do Crivo de Eratóstenes com MPI}}
+    }\\[2cm]
+
+    {\normalsize
+        Autor:\\[0.3cm]
+        Samuel de Souza Carvalho Almeida
+    }
+
+    \vfill
+
+    {\normalsize Professor: Rafael Sachetto Oliveira}\\[1cm]
+    {\large São João del-Rei -- MG}\\
+    {\large 2026}
+\end{titlepage}
+
+\pagenumbering{roman}
+
+% ==========================================
+% SUMÁRIO
+% ==========================================
+
+\tableofcontents
+\newpage
+\pagenumbering{arabic}
+
+% ==========================================
+% 1. INTRODUÇÃO
+% ==========================================
+
+\section{Introdução}
+
+Este trabalho apresenta a implementação sequencial e a paralelização do
+algoritmo Crivo de Eratóstenes para identificar os números primos existentes
+no intervalo de 2 até um limite inteiro $N$. A versão paralela utiliza MPI e o
+modelo mestre--escravo, no qual o processo mestre distribui o trabalho,
+coordena a comunicação e reúne os resultados produzidos pelos processos
+escravos.
+
+O desenvolvimento será acompanhado pela análise do desempenho sequencial, pela
+identificação das partes de maior custo computacional e pela avaliação dos
+ganhos obtidos com a paralelização. Serão considerados diferentes valores de
+$N$ e diferentes quantidades de processos.
+
+% ==========================================
+% 2. ALGORITMO SEQUENCIAL
+% ==========================================
+
+\section{Algoritmo sequencial}
+
+O Crivo de Eratóstenes começa com uma lista que representa os números de 2 até
+$N$. A partir do primeiro número primo, inicialmente 2, seus múltiplos são
+marcados como compostos. O próximo número ainda não marcado é considerado
+primo e o mesmo procedimento é repetido.
+
+Somente os candidatos a primo menores ou iguais a $\sqrt{N}$ precisam ser
+avaliados. Entretanto, seus múltiplos são marcados em todo o intervalo até
+$N$. Ao final, todos os números que não foram marcados são primos.
+
+Na implementação sequencial, o vetor de marcações é alocado com
+\texttt{calloc}, de modo que todas as posições começam indicando que o número
+ainda não foi identificado como composto. A marcação dos múltiplos de um primo
+$p$ começa em $p^2$, pois os múltiplos menores já foram processados por primos
+anteriores.
+
+% ==========================================
+% 3. PERFIL SEQUENCIAL
+% ==========================================
+
+\section{Perfil de desempenho sequencial}
+
+O perfil da versão sequencial será obtido com a ferramenta \texttt{gprof}. A
+análise deverá identificar o tempo gasto na criação do crivo, na marcação dos
+números compostos e na contagem dos primos encontrados. Esses resultados serão
+utilizados como referência para a escolha dos trechos paralelizáveis.
+
+% ==========================================
+% 4. OPORTUNIDADES DE PARALELIZAÇÃO
+% ==========================================
+
+\section{Oportunidades de paralelização}
+
+A principal oportunidade de paralelização está na marcação dos números
+compostos. Depois que os primos até $\sqrt{N}$ são conhecidos, diferentes
+partes do intervalo podem ser processadas de maneira independente. Assim, o
+intervalo $[2,N]$ pode ser dividido em blocos contínuos, com um bloco atribuído
+a cada processo escravo.
+
+Cada escravo mantém apenas o vetor correspondente ao seu próprio intervalo.
+Essa organização reduz a memória utilizada por processo e evita que processos
+diferentes escrevam na mesma região de memória.
+
+% ==========================================
+% 5. ESTRATÉGIA PARALELA
+% ==========================================
+
+\section{Estratégia de paralelização}
+
+O processo mestre, de rank 0, será responsável por ler $N$, calcular os primos
+até $\sqrt{N}$ e dividir o intervalo entre os processos escravos. A lista de
+primos-base será enviada a todos os processos por meio de uma operação de
+\textit{broadcast}. O mestre será utilizado somente para coordenação, conforme
+o modelo descrito no enunciado e apresentado em sala. Dessa forma, a marcação
+dos números compostos será realizada pelos $P-1$ processos escravos.
+
+A divisão utilizará blocos estáticos e contínuos. Essa escolha reduz a
+quantidade de mensagens e é adequada ao crivo, pois os blocos apresentam custos
+de processamento semelhantes. Quando a divisão do intervalo não for exata, o
+último escravo receberá também as posições restantes. Essa solução foi adotada
+por sua simplicidade, uma vez que o pequeno desequilíbrio não é relevante para
+a primeira implementação.
+
+Cada escravo utilizará os primos-base para marcar os compostos existentes em
+seu bloco. O mestre informará os limites inicial e final de cada intervalo por
+meio de uma mensagem \texttt{MPI\_Send}. O envio explícito dos dois limites
+mantém a responsabilidade da divisão no mestre e torna simples uma futura
+alteração na política de distribuição.
+
+O vetor de marcações local utilizará valores do tipo \texttt{bool}. Essa
+representação foi escolhida por expressar diretamente os dois estados
+necessários, primo possível ou composto, mantendo a primeira versão simples e
+legível. Uma representação compactada em bits poderá ser avaliada futuramente
+caso o consumo de memória se torne relevante.
+
+Para cada primo-base $p$, considerando $a$ como o início do bloco, o primeiro
+múltiplo marcado será calculado por
+
+\begin{equation}
+    \max\left(p^2, \left\lceil\frac{a}{p}\right\rceil p\right).
+\end{equation}
+
+Esse cálculo evita marcar o próprio primo quando ele pertence ao bloco e
+também evita repetir o trabalho que já foi realizado por primos menores.
+
+Depois do processamento, cada escravo enviará primeiro a quantidade de primos
+encontrados e, em seguida, a lista local. Esse protocolo permite que o mestre
+aloque exatamente a memória necessária para receber listas de tamanhos
+diferentes. O vetor de marcações não será transmitido, reduzindo a quantidade
+de dados enviados e correspondendo diretamente ao conteúdo que será gravado no
+arquivo de saída.
+
+Como os blocos representam intervalos contínuos e ordenados, o mestre receberá
+e concatenará os resultados pela ordem dos ranks. Assim, a lista final já
+estará em ordem crescente e não precisará de uma etapa adicional de ordenação.
+O arquivo \texttt{resultados/paralelo/primos.txt} armazenará um número primo
+por linha, facilitando sua escrita e leitura posterior.
+
+O tempo da execução paralela será medido no processo mestre, começando antes da
+distribuição dos dados e terminando após o recebimento do último resultado. O
+tempo utilizado para escrever o arquivo de saída não será incluído nessa
+medição. Antes do início do cronômetro, uma barreira garantirá que todos os
+processos estejam prontos. A medição utilizará a função \texttt{MPI\_Wtime}.
+
+Execuções com mais escravos do que números no intervalo serão rejeitadas. Essa
+validação evita processos sem trabalho e mantém o particionamento simples. Os
+erros identificados antes da distribuição serão comunicados de forma
+coordenada para que todos os processos finalizem normalmente. Falhas
+irrecuperáveis ocorridas durante o processamento, como erros de alocação nos
+escravos, utilizarão \texttt{MPI\_Abort} para impedir que os demais processos
+permaneçam bloqueados aguardando mensagens.
+
+As versões sequencial e paralela permanecerão em arquivos separados nesta
+etapa. Essa organização evita uma modularização prematura enquanto as
+responsabilidades compartilhadas entre as duas implementações ainda não estão
+completamente definidas.
+
+% ==========================================
+% 6. AVALIAÇÃO DE DESEMPENHO
+% ==========================================
+
+\section{Avaliação de desempenho}
+
+A avaliação comparará os tempos das versões sequencial e paralela. O
+\textit{speedup} será calculado por
+
+\begin{equation}
+    S(P) = \frac{T_{sequencial}}{T_{paralelo}(P)},
+\end{equation}
+
+em que $P$ representa a quantidade total de processos MPI. A eficiência será
+calculada por
+
+\begin{equation}
+    E(P) = \frac{S(P)}{P}.
+\end{equation}
+
+Os experimentos deverão variar tanto o valor de $N$ quanto a quantidade de
+processos, permitindo observar o custo da comunicação e a capacidade de
+escalabilidade da solução.
+
+Ao final de cada rodada, o valor de $N$, a quantidade de processos, a
+quantidade de primos e o tempo medido serão acrescentados ao arquivo
+correspondente. A versão sequencial utilizará
+\texttt{resultados/sequencial/execucoes.csv}, enquanto a versão paralela
+utilizará \texttt{resultados/paralelo/execucoes.csv}. Os dois arquivos terão as
+mesmas colunas, facilitando a comparação posterior. Essa gravação será
+realizada depois do encerramento do cronômetro e não fará parte do tempo de
+execução registrado.
+
+Os experimentos serão automatizados por um script que executará diferentes
+valores de $N$ e diferentes quantidades de processos. Cada configuração será
+repetida para reduzir a influência de variações ocasionais no tempo medido. O
+script compilará os programas uma única vez e acrescentará todas as rodadas aos
+arquivos de resultados, sem apagar medições anteriores.
+
+Serão utilizados 70 valores de $N$, distribuídos entre $10^3$ e $10^9$, e
+configurações com 2, 3, 4, 6, 8 e 12 processos MPI. A quantidade de
+processadores lógicos disponíveis será detectada antes dos experimentos. As
+configurações que excederem esse valor serão mantidas com
+\textit{oversubscription}, permitindo observar o comportamento da aplicação
+quando há mais processos MPI do que unidades de processamento disponíveis.
+
+Durante a série de desempenho, a gravação de \texttt{primos.txt} será
+desabilitada para evitar a escrita repetida de arquivos com milhões de linhas.
+Essa opção não altera o processamento medido: os primos ainda serão calculados,
+enviados pelos escravos e recebidos pelo mestre. As execuções individuais
+continuarão gerando a lista completa normalmente.
+
+A série completa poderá ser executada manualmente pelo GitHub Actions. Ao final
+da execução, os arquivos CSV e um relatório em Markdown serão disponibilizados
+como artefatos. O relatório registrará o sistema operacional, o processador, a
+quantidade de núcleos físicos e lógicos, a memória, o compilador e a versão do
+MPI presentes no runner. Essas informações serão consideradas na comparação
+dos experimentos, pois o hardware dos runners hospedados pode variar entre
+execuções.
+
+% ==========================================
+% 7. CONCLUSÕES
+% ==========================================
+
+\section{Conclusões}
+
+Esta seção será completada após a implementação da versão paralela e a execução
+dos experimentos de desempenho.
+
+\end{document}
