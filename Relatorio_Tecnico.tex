@@ -1,0 +1,285 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue}
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  frame=single
+}
+
+\title{Relatório Técnico\\Crivo de Eratóstenes com MPI}
+\author{Trabalho Prático 1 -- Computação Paralela 2026/2}
+\date{19 de outubro de 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Este relatório documenta a implementação sequencial e a implementação
+paralela, baseada no modelo mestre--escravo do MPI, do Crivo de Eratóstenes.
+Também registra a conferência dos requisitos do enunciado na pasta
+\texttt{sieve-of-eratosthenes-mpi}. A implementação e a automação dos
+experimentos estão presentes; entretanto, nesta entrega não foram encontrados
+os arquivos de resultados nem uma execução de \texttt{gprof}. Assim, os
+ganhos numéricos de desempenho são descritos metodologicamente, mas não são
+inventados: as tabelas de speedup e eficiência devem ser preenchidas após a
+execução dos experimentos em um ambiente com OpenMPI.
+\end{abstract}
+
+\section{Conferência dos requisitos}
+
+O enunciado solicita uma aplicação C que receba um único inteiro \(N\), use
+MPI no modelo mestre--escravo, escreva os primos em ordem crescente em
+\texttt{primos.txt}, meça o tempo no mestre sem incluir a escrita do arquivo e
+apresente um relatório com quatro partes técnicas. A situação encontrada na
+pasta é:
+
+\begin{longtable}{p{0.34\textwidth}p{0.18\textwidth}p{0.38\textwidth}}
+\toprule
+\textbf{Requisito} & \textbf{Situação} & \textbf{Evidência} \\
+\midrule
+\endhead
+Entrada de um único \(N\) & Atendido & Validação em \texttt{src/sequencial.c} e \texttt{src/paralelo.c}. \\
+Crivo sequencial & Atendido & \texttt{src/sequencial.c}. \\
+Modelo mestre--escravo com MPI & Atendido & Rank 0 distribui intervalos; ranks 1 até \(P-1\) processam os blocos em \texttt{src/paralelo.c}. \\
+Lista de primos-base compartilhada & Atendido & \texttt{MPI\_Bcast} em \texttt{distribuir\_primos\_base}. \\
+Recebimento e consolidação dos resultados & Atendido & \texttt{MPI\_Recv} em \texttt{receber\_resultados}; os blocos são recebidos por rank. \\
+\texttt{primos.txt} em ordem crescente & Atendido no código & \texttt{salvar\_primos} escreve os blocos na ordem dos ranks, e os intervalos são contíguos e crescentes. \\
+Medição sem escrita do arquivo & Atendido & O tempo termina antes de \texttt{salvar\_primos} e de \texttt{registrar\_resultado}. \\
+Perfil sequencial com \texttt{gprof} & Preparado, sem evidência de execução & O alvo \texttt{profile} existe no \texttt{Makefile}, mas não há \texttt{gmon.out} ou saída do \texttt{gprof}. \\
+Experimentos com \(N\) e processos variados & Automatizado, sem dados nesta pasta & \texttt{scripts/executar\_experimentos.sh} e o workflow do GitHub Actions estão presentes; os CSVs são gerados e ignorados pelo Git. \\
+Relatório técnico em PDF & Gerado por este documento & Este arquivo constitui o relatório técnico solicitado. \\
+\bottomrule
+\end{longtable}
+
+\section{Comparação com a implementação de referência}
+
+Também foi analisada a pasta
+\texttt{crivo-de-eratostenes-main/crivo-de-eratostenes-main}, que contém uma
+implementação anterior do mesmo trabalho. A comparação mostrou que não havia
+um algoritmo obrigatório ausente no projeto atual. As duas versões usam
+primos-base até \(\sqrt{N}\), dividem \([2,N]\) entre escravos e consolidam
+os blocos no mestre.
+
+\begin{longtable}{p{0.28\textwidth}p{0.31\textwidth}p{0.31\textwidth}}
+\toprule
+\textbf{Aspecto} & \textbf{Implementação comparada} & \textbf{Implementação atual} \\
+\midrule
+\endhead
+Saída & Escreve diretamente \texttt{primos.txt}. & Agora também escreve diretamente \texttt{primos.txt}, eliminando a ambiguidade do caminho exigido pelo enunciado. \\
+Coleta MPI & Usa \texttt{MPI\_Gather} e \texttt{MPI\_Gatherv}. & Usa \texttt{MPI\_Send}/\texttt{MPI\_Recv}; é equivalente para este particionamento e recebe os blocos explicitamente por rank. \\
+Validação & Usa \texttt{atoi}, com validação limitada. & Usa \texttt{strtol}, verifica limites, quantidade de processos e falhas de alocação. \\
+Tratamento de falhas & Mensagens simples e chamadas diretas a \texttt{MPI\_Abort}. & Centraliza falhas MPI em \texttt{abortar\_execucao} e verifica operações de arquivo. \\
+Medição & Começa antes do cálculo dos primos-base. & Começa após a preparação e sincronização, incluindo a distribuição, o processamento e o recebimento, sem incluir a escrita, conforme o enunciado. \\
+Experimentos & Não possui automação de séries ou resumo. & Possui scripts, CSVs, médias, speedup, eficiência e workflow de CI. \\
+Profiling & Contém artefatos binários, mas não uma análise técnica reproduzível. & Possui o alvo reproduzível \texttt{make profile N=...}; falta apenas executar e anexar a saída. \\
+\bottomrule
+\end{longtable}
+
+A implementação comparada também tem limitações que não devem ser copiadas:
+\texttt{atoi} não distingue entrada inválida de zero, não verifica
+adequadamente falhas de comunicação e mistura a lista recebida e a lista de
+envio no \texttt{MPI\_Gatherv} do mestre. A versão atual preserva a solução
+mais segura, acrescentando apenas a compatibilidade do nome do arquivo de
+saída.
+
+\section{Perfil de desempenho sequencial}
+
+A versão sequencial aloca um vetor booleano de tamanho \(N+1\), marca os
+múltiplos de cada primo até \(\sqrt{N}\) e percorre o vetor para contar os
+primos. O custo assintótico é \(O(N\log\log N)\) para a marcação e \(O(N)\)
+para a contagem, com consumo de memória \(O(N)\).
+
+O arquivo \texttt{Makefile} disponibiliza:
+
+\begin{lstlisting}
+make profile N=<limite>
+\end{lstlisting}
+
+Esse alvo recompila a versão sequencial com \texttt{-pg}, executa o programa e
+chama \texttt{gprof}. No estado conferido, o alvo está implementado, mas não
+há um perfil produzido para identificar quantitativamente as funções mais
+custosas. Pela estrutura do código, o laço de marcação em
+\texttt{criar\_crivo} e a varredura em \texttt{contar\_primos} são os trechos
+que devem concentrar o trabalho.
+
+\section{Oportunidades de paralelização}
+
+O intervalo \([2,N]\) pode ser particionado em blocos contínuos independentes
+depois que todos os processos conhecem os primos menores ou iguais a
+\(\sqrt{N}\). Para cada primo-base, cada processo marca apenas os múltiplos
+que caem em seu próprio bloco. A marcação local e a enumeração dos primos não
+dependem dos demais blocos, o que elimina a necessidade de sincronização
+durante a fase computacional.
+
+O código paralelo usa a seguinte divisão:
+
+\begin{itemize}
+  \item o mestre calcula os primos-base até \(\sqrt{N}\);
+  \item o mestre envia a lista-base com \texttt{MPI\_Bcast};
+  \item cada escravo recebe um intervalo contíguo por \texttt{MPI\_Send};
+  \item cada escravo executa \texttt{criar\_crivo\_local} e
+        \texttt{listar\_primos};
+  \item o mestre recebe primeiro a quantidade e depois a lista de cada
+        escravo;
+  \item a concatenação dos blocos preserva a ordem crescente.
+\end{itemize}
+
+\section{Paralelização e comunicação}
+
+O processo mestre é o rank 0. A quantidade de escravos é \(P-1\), e o
+intervalo de números é distribuído entre esses escravos. A implementação
+valida \(P\geq2\), limita \(N\) a um inteiro representável e rejeita mais
+escravos que números disponíveis.
+
+Antes da medição, o programa calcula os primos-base e sincroniza os processos
+com uma barreira. A medição começa no mestre imediatamente antes do
+\texttt{MPI\_Bcast} da lista-base e termina depois do recebimento do último
+resultado. Portanto, ela inclui a distribuição MPI, o processamento local e a
+coleta, mas não inclui a escrita de \texttt{primos.txt} nem o registro no CSV.
+
+As mensagens usadas são:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Etapa} & \textbf{Operação} & \textbf{Conteúdo} \\
+\midrule
+Lista-base & \texttt{MPI\_Bcast} & quantidade e valores dos primos \\
+Intervalos & \texttt{MPI\_Send}/\texttt{MPI\_Recv} & início e fim do bloco \\
+Contagem local & \texttt{MPI\_Send}/\texttt{MPI\_Recv} & quantidade de primos \\
+Lista local & \texttt{MPI\_Send}/\texttt{MPI\_Recv} & números primos do bloco \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Para execuções normais, a lista é escrita em
+\texttt{primos.txt}, exatamente como solicitado no enunciado. Durante séries grandes, a variável
+\texttt{SALVAR\_PRIMOS=0} desativa apenas a escrita, evitando que o custo de
+I/O e o espaço em disco distorçam os experimentos.
+
+\section{Avaliação dos ganhos da paralelização}
+
+O script \texttt{scripts/executar\_experimentos.sh} executa a versão
+sequencial e as versões MPI para diversos valores de \(N\), quantidades de
+processos e repetições. A configuração padrão usa 70 limites, cinco
+repetições e \(P\in\{2,3,4,6,8,12\}\), totalizando 2450 execuções. Os tempos
+são registrados em:
+
+\begin{itemize}
+  \item \texttt{resultados/sequencial/execucoes.csv};
+  \item \texttt{resultados/paralelo/execucoes.csv}.
+\end{itemize}
+
+Para cada \(N\) e \(P\), devem ser calculados:
+
+\[
+  S(N,P)=\frac{T_{\mathrm{seq}}(N)}{T_{\mathrm{par}}(N,P)}
+  \qquad\text{e}\qquad
+  E(N,P)=\frac{S(N,P)}{P}.
+\]
+
+O script \texttt{scripts/gerar\_relatorio.sh} já calcula médias, mínimos,
+máximos, speedup e eficiência a partir dos CSVs. Contudo, a pasta conferida
+não contém os CSVs gerados, nem \texttt{resultados/resumo\_execucao.md}.
+Também não foi possível executar OpenMPI neste ambiente local, pois
+\texttt{docker}, \texttt{mpicc} e \texttt{mpirun} não estão disponíveis.
+Consequentemente, não há números de speedup e eficiência que possam ser
+reportados com validade nesta versão do documento.
+
+Para completar a avaliação, em um ambiente Docker ou Linux com OpenMPI,
+execute:
+
+\begin{lstlisting}
+docker compose build
+docker compose run --rm dev bash scripts/executar_experimentos.sh
+\end{lstlisting}
+
+Depois, os valores produzidos em \texttt{resultados/resumo\_execucao.md}
+devem ser incorporados a esta seção, juntamente com o hardware e as versões
+de GCC e MPI registrados pelo script.
+
+\section{Conclusão}
+
+A conferência confirma que a pasta contém o código-fonte C, o \texttt{Makefile},
+a configuração Docker, os scripts de experimentos, o gerador de resumo e o
+workflow de execução MPI. A implementação atende estruturalmente aos
+requisitos algorítmicos e de comunicação do enunciado.
+
+O ponto pendente não é uma ausência de automação, mas de evidência de
+execução: os resultados experimentais e o perfil \texttt{gprof} não foram
+encontrados na pasta. Assim, antes da entrega definitiva, é necessário
+executar o perfil sequencial e a série de experimentos, anexar os CSVs ou o
+resumo gerado e substituir a ressalva desta seção por uma análise baseada em
+medidas reais. A apresentação do grupo deve explicar a divisão de dados, as
+mensagens MPI, a exclusão da escrita do arquivo da medição e a interpretação
+de speedup e eficiência.
+
+\section{Validação executada neste ambiente}
+
+Foram executadas as validações que não dependem de uma instalação MPI:
+
+\begin{center}
+\begin{tabular}{p{0.58\textwidth}p{0.22\textwidth}}
+\toprule
+\textbf{Validação} & \textbf{Resultado} \\
+\midrule
+\texttt{bash -n scripts/executar\_experimentos.sh} & Aprovado \\
+\texttt{bash -n scripts/gerar\_relatorio.sh} & Aprovado \\
+\texttt{git diff --check} & Aprovado \\
+Compilação do PDF com \texttt{pdflatex} em duas passagens & Aprovado \\
+Compilação C sequencial com o GCC MinGW disponível & Não concluída neste ambiente \\
+Compilação MPI com \texttt{mpicc} & Não executada: ferramenta indisponível \\
+Execução MPI com \texttt{mpirun} & Não executada: ferramenta indisponível \\
+Instalação do pacote Ubuntu 24.04 via \texttt{winget} & Pacote instalado \\
+Inicialização do Ubuntu no WSL & Bloqueada: erro \texttt{0x8007019e} \\
+Habilitação/atualização do WSL & Bloqueada: requer administrador, erro \texttt{0x80073d28} \\
+Série completa de experimentos & Não executada: requer OpenMPI \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+O PDF foi gerado com cinco páginas. O compilador LaTeX emitiu avisos de
+quebra de tabelas longas, mas não apresentou erro fatal e produziu o arquivo
+de saída. Como o ambiente Windows utilizado não possui \texttt{mpicc},
+\texttt{mpirun} ou Docker. O pacote Ubuntu 24.04 foi instalado via
+\texttt{winget}, mas sua inicialização retornou \texttt{0x8007019e}, indicando
+que o Subsistema do Windows para Linux não está habilitado. A atualização do
+pacote WSL retornou \texttt{0x80073d28}, indicando necessidade de privilégios
+administrativos. Portanto, não foi possível obter tempos, contagens de
+primos, speedups ou eficiências reais nesta sessão.
+
+Depois de habilitar o WSL em um PowerShell executado como administrador,
+é necessário reiniciar o Windows, abrir o Ubuntu e executar:
+
+\begin{lstlisting}
+sudo apt update
+sudo apt install -y build-essential binutils libopenmpi-dev openmpi-bin
+cd /mnt/c/Users/livia/Desktop/ccomp/2026.2/computacao_paralela/sieve-of-eratosthenes-mpi
+make
+make run-sequential N=100
+make run NP=4 N=100
+make profile N=1000000
+LIMITES="1000 10000 100000 1000000" PROCESSOS="2 4" REPETICOES=3 \
+  bash scripts/executar_experimentos.sh
+\end{lstlisting}
+
+Esses comandos produzirão o perfil, os CSVs e
+\texttt{resultados/resumo\_execucao.md}, que devem ser incorporados à versão
+final deste relatório.
+
+\end{document}

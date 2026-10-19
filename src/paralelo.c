@@ -11,7 +11,7 @@
 #define DIRETORIO_RESULTADOS "resultados"
 #define DIRETORIO_PARALELO DIRETORIO_RESULTADOS "/paralelo"
 #define ARQUIVO_RESULTADOS DIRETORIO_PARALELO "/execucoes.csv"
-#define ARQUIVO_PRIMOS DIRETORIO_PARALELO "/primos.txt"
+#define ARQUIVO_PRIMOS "primos.txt"
 
 enum TagMensagem {
     TAG_INTERVALO,

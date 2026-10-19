@@ -51,7 +51,7 @@ docker compose run --rm dev make run NP=4 N=100
 ```
 
 A versão paralela grava os números primos encontrados no arquivo
-`resultados/paralelo/primos.txt`, com um número por linha.
+`primos.txt`, com um número por linha, conforme especificado no enunciado.
 
 ## Resultados
 

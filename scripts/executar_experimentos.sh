@@ -51,7 +51,7 @@ printf 'Total de execucoes planejadas: %d\n' "$total_execucoes"
 if [[ "$salvar_primos" == "0" ]]; then
     printf 'A lista primos.txt nao sera gerada durante os experimentos.\n'
 
-    if [[ -f resultados/paralelo/primos.txt ]]; then
+    if [[ -f primos.txt ]]; then
         printf 'Aviso: o primos.txt existente nao sera atualizado.\n'
     fi
 fi
