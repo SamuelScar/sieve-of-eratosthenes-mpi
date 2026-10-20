@@ -19,11 +19,11 @@
  */
 static int ler_limite(const char *valor)
 {
-    char *fim;
-    long limite = strtol(valor, &fim, 10);
+    char *fim_conversao;
+    long limite = strtol(valor, &fim_conversao, 10);
 
     const bool limite_invalido =
-        *valor == '\0' || *fim != '\0' || limite < 2 || limite > INT_MAX;
+        *valor == '\0' || *fim_conversao != '\0' || limite < 2 || limite > INT_MAX;
 
     return limite_invalido ? -1 : (int)limite;
 }
@@ -44,10 +44,9 @@ static bool *criar_crivo(size_t limite)
         if (compostos[primo])
             continue;
 
-        // Multiplos menores que primo * primo ja foram eliminados anteriormente.
-        for (size_t multiplo = primo * primo; multiplo <= limite; multiplo += primo) {
+        // Os multiplos menores que primo * primo ja foram eliminados.
+        for (size_t multiplo = primo * primo; multiplo <= limite; multiplo += primo)
             compostos[multiplo] = true;
-        }
     }
 
     return compostos;
@@ -80,7 +79,6 @@ static double obter_tempo_atual(void)
  */
 static int registrar_resultado(
     int limite,
-    int quantidade_processos,
     int quantidade_primos,
     double tempo_execucao
 )
@@ -130,7 +128,7 @@ static int registrar_resultado(
             arquivo,
             "%d,%d,%d,%.9f\n",
             limite,
-            quantidade_processos,
+            1,
             quantidade_primos,
             tempo_execucao
         ) < 0;
@@ -158,7 +156,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    const double inicio_tempo = obter_tempo_atual();
+    const double inicio = obter_tempo_atual();
     bool *compostos = criar_crivo((size_t)limite);
 
     if (compostos == NULL) {
@@ -167,18 +165,17 @@ int main(int argc, char *argv[])
     }
 
     const int quantidade_primos = contar_primos(compostos, (size_t)limite);
-    const double tempo_execucao = obter_tempo_atual() - inicio_tempo;
+    const double tempo_execucao = obter_tempo_atual() - inicio;
 
     printf("Quantidade de primos ate %d: %d\n", limite, quantidade_primos);
     printf("Tempo sequencial: %.6f segundos\n", tempo_execucao);
 
-    const int status = registrar_resultado(
+    const int status_registro = registrar_resultado(
         limite,
-        1,
         quantidade_primos,
         tempo_execucao
     );
 
     free(compostos);
-    return status;
+    return status_registro;
 }

@@ -1,35 +1,34 @@
 \documentclass[12pt,a4paper]{article}
 
-% ==========================================
-% PACOTES
-% ==========================================
-
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[brazil]{babel}
 \usepackage{amsmath}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{float}
 \usepackage{geometry}
+\usepackage{graphicx}
 \usepackage{newtxtext,newtxmath}
 \usepackage{setspace}
 \usepackage[
     colorlinks=true,
     linkcolor=black,
+    citecolor=black,
     urlcolor=blue
 ]{hyperref}
 
 \geometry{a4paper, margin=2cm}
 \onehalfspacing
+\setlength{\emergencystretch}{3em}
 
-% ==========================================
-% DOCUMENTO
-% ==========================================
+\newcommand{\graficotempos}{imagens/tempos_1_bilhao.png}
+\IfFileExists{\graficotempos}{}{%
+    \renewcommand{\graficotempos}{docs/imagens/tempos_1_bilhao.png}%
+}
 
 \begin{document}
 \pagenumbering{gobble}
-
-% ==========================================
-% CAPA
-% ==========================================
 
 \begin{titlepage}
     \centering
@@ -45,8 +44,9 @@
     }\\[2cm]
 
     {\normalsize
-        Autor:\\[0.3cm]
-        Samuel de Souza Carvalho Almeida
+        Autores:\\[0.3cm]
+        Samuel de Souza Carvalho Almeida\\
+        Livia Maia Claudio
     }
 
     \vfill
@@ -58,221 +58,551 @@
 
 \pagenumbering{roman}
 
-% ==========================================
-% SUMÁRIO
-% ==========================================
-
 \tableofcontents
+\newpage
+
+\begin{abstract}
+Este relatório apresenta a implementação sequencial e a paralelização, com
+MPI e no modelo mestre--escravo, do Crivo de Eratóstenes. O intervalo
+$[2,N]$ foi dividido em blocos contínuos processados por $P-1$ escravos,
+enquanto o processo de rank 0 coordenou a distribuição e a coleta. Foram
+realizadas 7350 execuções em dois ambientes do GitHub Actions. No ambiente A,
+com dois processadores lógicos, nenhuma configuração MPI superou a versão
+sequencial. No ambiente B, com quatro processadores lógicos, 103 das 420
+configurações médias apresentaram \textit{speedup} maior ou igual a 1. Para
+$N=10^9$, o melhor resultado do ambiente B foi $S=1{,}331056$, com 12
+processos. A comparação mostra que a quantidade de recursos disponíveis
+altera diretamente o benefício obtido com a paralelização.
+\end{abstract}
+
 \newpage
 \pagenumbering{arabic}
 
-% ==========================================
-% 1. INTRODUÇÃO
-% ==========================================
-
 \section{Introdução}
 
-Este trabalho apresenta a implementação sequencial e a paralelização do
-algoritmo Crivo de Eratóstenes para identificar os números primos existentes
-no intervalo de 2 até um limite inteiro $N$. A versão paralela utiliza MPI e o
-modelo mestre--escravo, no qual o processo mestre distribui o trabalho,
-coordena a comunicação e reúne os resultados produzidos pelos processos
-escravos.
+O objetivo do trabalho é implementar o Crivo de Eratóstenes em C e
+paralelizá-lo com MPI no modelo mestre--escravo, conforme o enunciado da
+disciplina \cite{enunciado}. A aplicação recebe um limite inteiro $N$ e
+identifica todos os números primos no intervalo de 2 até $N$. Na versão
+paralela, o mestre coordena a divisão do intervalo e a consolidação dos
+resultados, enquanto os escravos executam a maior parte do trabalho
+computacional.
 
-O desenvolvimento será acompanhado pela análise do desempenho sequencial, pela
-identificação das partes de maior custo computacional e pela avaliação dos
-ganhos obtidos com a paralelização. Serão considerados diferentes valores de
-$N$ e diferentes quantidades de processos.
+Além da implementação, o trabalho exige a análise do perfil sequencial, a
+identificação dos trechos paralelizáveis, a documentação das comunicações MPI
+e a avaliação dos ganhos com diferentes valores de $N$ e quantidades de
+processos. Por esse motivo, este relatório apresenta tanto o projeto do
+algoritmo quanto os resultados medidos, incluindo situações em que a
+paralelização não produziu aceleração.
 
-% ==========================================
-% 2. ALGORITMO SEQUENCIAL
-% ==========================================
+\section{Implementação sequencial}
 
-\section{Algoritmo sequencial}
+\subsection{Funcionamento do algoritmo}
 
-O Crivo de Eratóstenes começa com uma lista que representa os números de 2 até
-$N$. A partir do primeiro número primo, inicialmente 2, seus múltiplos são
-marcados como compostos. O próximo número ainda não marcado é considerado
-primo e o mesmo procedimento é repetido.
+O Crivo de Eratóstenes representa os inteiros de 2 até $N$ em um vetor de
+marcações. Inicialmente, nenhum número está marcado como composto. Para cada
+primo $p\leq\sqrt{N}$, são marcados seus múltiplos a partir de $p^2$, pois os
+múltiplos menores já foram tratados por primos anteriores. Ao final, as
+posições não marcadas representam os números primos.
 
-Somente os candidatos a primo menores ou iguais a $\sqrt{N}$ precisam ser
-avaliados. Entretanto, seus múltiplos são marcados em todo o intervalo até
-$N$. Ao final, todos os números que não foram marcados são primos.
+Na implementação sequencial, o vetor de valores booleanos é criado com
+\texttt{calloc}. A condição \texttt{primo <= limite / primo} evita o possível
+estouro que ocorreria ao avaliar diretamente \texttt{primo * primo} para
+valores grandes. Depois da marcação, uma segunda varredura conta os primos.
+Assim, a marcação tem custo assintótico $O(N\log\log N)$, a contagem tem custo
+$O(N)$ e o consumo de memória é $O(N)$.
 
-Na implementação sequencial, o vetor de marcações é alocado com
-\texttt{calloc}, de modo que todas as posições começam indicando que o número
-ainda não foi identificado como composto. A marcação dos múltiplos de um primo
-$p$ começa em $p^2$, pois os múltiplos menores já foram processados por primos
-anteriores.
+O cronômetro sequencial começa antes da criação do crivo e termina depois da
+contagem. A impressão e o registro no arquivo
+\texttt{resultados/sequencial/execucoes.csv} ocorrem fora da região medida.
 
-% ==========================================
-% 3. PERFIL SEQUENCIAL
-% ==========================================
+\subsection{Perfil de desempenho}
 
-\section{Perfil de desempenho sequencial}
+O \texttt{Makefile} possui o alvo \texttt{profile}, que recompila a versão
+sequencial com a opção \texttt{-pg}, executa o programa e processa o arquivo
+\texttt{gmon.out} com o \texttt{gprof}. Essa ferramenta produz, entre outras
+informações, o perfil plano de tempo por função e o grafo de chamadas
+\cite{gprof}.
 
-O perfil da versão sequencial será obtido com a ferramenta \texttt{gprof}. A
-análise deverá identificar o tempo gasto na criação do crivo, na marcação dos
-números compostos e na contagem dos primos encontrados. Esses resultados serão
-utilizados como referência para a escolha dos trechos paralelizáveis.
+Os resultados coletados nos experimentos contêm os tempos e as contagens de
+primos, mas não contêm a saída do \texttt{gprof}. Portanto,
+não são atribuídos percentuais de tempo que não foram medidos. A análise do
+fluxo e dos custos do código identifica os seguintes pontos:
 
-% ==========================================
-% 4. OPORTUNIDADES DE PARALELIZAÇÃO
-% ==========================================
+\begin{table}[ht]
+    \centering
+    \caption{Funções principais da versão sequencial.}
+    \label{tab:perfil-sequencial}
+    \begin{tabular}{p{0.24\textwidth}p{0.47\textwidth}p{0.18\textwidth}}
+        \toprule
+        \textbf{Função} & \textbf{Responsabilidade} & \textbf{Custo} \\
+        \midrule
+        \texttt{criar\_crivo} & Aloca o vetor e marca os múltiplos dos primos. & $O(N\log\log N)$ \\
+        \texttt{contar\_primos} & Percorre todas as posições de 2 até $N$. & $O(N)$ \\
+        \texttt{ler\_limite} & Converte e valida o argumento da linha de comando. & Constante \\
+        \texttt{registrar\_resultado} & Grava o CSV depois da medição. & Fora do tempo \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Os dois primeiros trechos crescem linearmente ou quase linearmente com $N$ e
+dominam o trabalho. A marcação dos compostos é a principal oportunidade de
+paralelização, enquanto a contagem pode ser feita localmente em cada bloco.
 
 \section{Oportunidades de paralelização}
 
-A principal oportunidade de paralelização está na marcação dos números
-compostos. Depois que os primos até $\sqrt{N}$ são conhecidos, diferentes
-partes do intervalo podem ser processadas de maneira independente. Assim, o
-intervalo $[2,N]$ pode ser dividido em blocos contínuos, com um bloco atribuído
-a cada processo escravo.
+Depois que os primos até $\sqrt{N}$ são conhecidos, intervalos distintos
+podem ser processados de maneira independente. Cada processo precisa apenas
+dos primos-base e dos limites do próprio bloco. Não existe escrita concorrente
+porque cada escravo mantém um vetor local.
 
-Cada escravo mantém apenas o vetor correspondente ao seu próprio intervalo.
-Essa organização reduz a memória utilizada por processo e evita que processos
-diferentes escrevam na mesma região de memória.
+As atividades foram classificadas da seguinte forma:
 
-% ==========================================
-% 5. ESTRATÉGIA PARALELA
-% ==========================================
+\begin{itemize}
+    \item a leitura e validação de $N$ permanecem no mestre;
+    \item o mestre calcula os primos-base até $\sqrt{N}$;
+    \item a marcação dos compostos e a criação das listas locais são
+          paralelizadas entre os escravos;
+    \item a distribuição dos blocos e a consolidação final permanecem no
+          mestre;
+    \item a escrita do arquivo final é sequencial e ocorre depois da região
+          cronometrada.
+\end{itemize}
 
-\section{Estratégia de paralelização}
+Essa decomposição reduz o tamanho do vetor de marcações por processo, mas não
+elimina custos de comunicação. Como o enunciado exige a lista final, todos os
+primos encontrados precisam chegar ao mestre. Logo, o volume da coleta cresce
+com $\pi(N)$, a quantidade de primos menores ou iguais a $N$.
 
-O processo mestre, de rank 0, será responsável por ler $N$, calcular os primos
-até $\sqrt{N}$ e dividir o intervalo entre os processos escravos. A lista de
-primos-base será enviada a todos os processos por meio de uma operação de
-\textit{broadcast}. O mestre será utilizado somente para coordenação, conforme
-o modelo descrito no enunciado e apresentado em sala. Dessa forma, a marcação
-dos números compostos será realizada pelos $P-1$ processos escravos.
+\section{Estratégia de paralelização com MPI}
 
-A divisão utilizará blocos estáticos e contínuos. Essa escolha reduz a
-quantidade de mensagens e é adequada ao crivo, pois os blocos apresentam custos
-de processamento semelhantes. Quando a divisão do intervalo não for exata, o
-último escravo receberá também as posições restantes. Essa solução foi adotada
-por sua simplicidade, uma vez que o pequeno desequilíbrio não é relevante para
-a primeira implementação.
+\subsection{Divisão dos dados}
 
-Cada escravo utilizará os primos-base para marcar os compostos existentes em
-seu bloco. O mestre informará os limites inicial e final de cada intervalo por
-meio de uma mensagem \texttt{MPI\_Send}. O envio explícito dos dois limites
-mantém a responsabilidade da divisão no mestre e torna simples uma futura
-alteração na política de distribuição.
-
-O vetor de marcações local utilizará valores do tipo \texttt{bool}. Essa
-representação foi escolhida por expressar diretamente os dois estados
-necessários, primo possível ou composto, mantendo a primeira versão simples e
-legível. Uma representação compactada em bits poderá ser avaliada futuramente
-caso o consumo de memória se torne relevante.
-
-Para cada primo-base $p$, considerando $a$ como o início do bloco, o primeiro
-múltiplo marcado será calculado por
+Sejam $P$ a quantidade total de processos e $W=P-1$ a quantidade de
+escravos. O intervalo contém $N-1$ números. Para um escravo de rank
+$r\in\{1,\ldots,W\}$, o tamanho-base é
 
 \begin{equation}
-    \max\left(p^2, \left\lceil\frac{a}{p}\right\rceil p\right).
+    B=\left\lfloor\frac{N-1}{W}\right\rfloor,
 \end{equation}
 
-Esse cálculo evita marcar o próprio primo quando ele pertence ao bloco e
-também evita repetir o trabalho que já foi realizado por primos menores.
+e o início do bloco é
 
-Depois do processamento, cada escravo enviará primeiro a quantidade de primos
-encontrados e, em seguida, a lista local. Esse protocolo permite que o mestre
-aloque exatamente a memória necessária para receber listas de tamanhos
-diferentes. O vetor de marcações não será transmitido, reduzindo a quantidade
-de dados enviados e correspondendo diretamente ao conteúdo que será gravado no
-arquivo de saída.
+\begin{equation}
+    a_r=2+(r-1)B.
+\end{equation}
 
-Como os blocos representam intervalos contínuos e ordenados, o mestre receberá
-e concatenará os resultados pela ordem dos ranks. Assim, a lista final já
-estará em ordem crescente e não precisará de uma etapa adicional de ordenação.
-O arquivo \texttt{resultados/paralelo/primos.txt} armazenará um número primo
-por linha, facilitando sua escrita e leitura posterior.
+O fim é $a_r+B-1$, exceto para o último escravo, que recebe até $N$ e absorve
+o restante da divisão. Os blocos são contíguos, disjuntos e ordenados por
+rank.
 
-O tempo da execução paralela será medido no processo mestre, começando antes da
-distribuição dos dados e terminando após o recebimento do último resultado. O
-tempo utilizado para escrever o arquivo de saída não será incluído nessa
-medição. Antes do início do cronômetro, uma barreira garantirá que todos os
-processos estejam prontos. A medição utilizará a função \texttt{MPI\_Wtime}.
+Para cada primo-base $p$, o primeiro múltiplo marcado no bloco $[a_r,b_r]$ é
 
-Execuções com mais escravos do que números no intervalo serão rejeitadas. Essa
-validação evita processos sem trabalho e mantém o particionamento simples. Os
-erros identificados antes da distribuição serão comunicados de forma
-coordenada para que todos os processos finalizem normalmente. Falhas
-irrecuperáveis ocorridas durante o processamento, como erros de alocação nos
-escravos, utilizarão \texttt{MPI\_Abort} para impedir que os demais processos
+\begin{equation}
+    \max\left(p^2,\left\lceil\frac{a_r}{p}\right\rceil p\right).
+\end{equation}
+
+Esse cálculo evita marcar o próprio primo e evita repetir eliminações que já
+foram realizadas por primos menores.
+
+\subsection{Comunicação entre os processos}
+
+O MPI define comunicações ponto a ponto e coletivas entre processos
+\cite{mpi41}. A implementação emprega ambas, conforme a
+Tabela~\ref{tab:comunicacoes}.
+
+\begin{table}[ht]
+    \centering
+    \caption{Comunicações realizadas na versão paralela.}
+    \label{tab:comunicacoes}
+    \begin{tabular}{p{0.24\textwidth}p{0.29\textwidth}p{0.35\textwidth}}
+        \toprule
+        \textbf{Etapa} & \textbf{Operação} & \textbf{Conteúdo} \\
+        \midrule
+        Validação & \texttt{MPI\_Bcast} & Estado da entrada e valor de $N$ \\
+        Primos-base & \texttt{MPI\_Bcast} & Quantidade e valores dos primos até $\sqrt{N}$ \\
+        Distribuição & \texttt{MPI\_Send}/\texttt{MPI\_Recv} & Limites inicial e final de cada bloco \\
+        Coleta & \texttt{MPI\_Send}/\texttt{MPI\_Recv} & Quantidade e lista de primos de cada escravo \\
+        Estado final & \texttt{MPI\_Bcast} & Resultado da operação de saída \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+O mestre recebe os resultados em ordem crescente de rank. Como os blocos
+também são crescentes, a concatenação das listas locais já produz uma lista
+ordenada, sem uma etapa adicional de ordenação. Nas execuções comuns, essa
+lista é gravada em \texttt{resultados/paralelo/primos.txt}, com um primo por
+linha.
+
+Falhas de entrada são comunicadas coletivamente para que todos os processos
+terminem de forma coordenada. Falhas irrecuperáveis nos escravos, como erros
+de alocação, utilizam \texttt{MPI\_Abort} para evitar que outros processos
 permaneçam bloqueados aguardando mensagens.
 
-As versões sequencial e paralela permanecerão em arquivos separados nesta
-etapa. Essa organização evita uma modularização prematura enquanto as
-responsabilidades compartilhadas entre as duas implementações ainda não estão
-completamente definidas.
+\subsection{Região de medição}
 
-% ==========================================
-% 6. AVALIAÇÃO DE DESEMPENHO
-% ==========================================
+Depois do cálculo dos primos-base, uma barreira sincroniza os processos. O
+mestre inicia o cronômetro com \texttt{MPI\_Wtime} imediatamente antes da
+distribuição da lista-base. O tempo termina somente depois do recebimento do
+último resultado. Portanto, a medição inclui o \textit{broadcast}, o envio dos
+intervalos, a marcação local, a criação das listas e a coleta no mestre. A
+escrita de \texttt{primos.txt} e o registro no CSV não são incluídos, em
+conformidade com o enunciado.
 
-\section{Avaliação de desempenho}
+O cálculo inicial dos primos-base ocorre antes do cronômetro paralelo. Essa
+diferença deve ser considerada na comparação, pois o tempo sequencial inclui
+todo o crivo e a contagem. Ainda assim, a comparação permanece útil desde que
+essa região de medição seja mantida em todas as rodadas e explicitada na
+interpretação dos resultados.
 
-A avaliação comparará os tempos das versões sequencial e paralela. O
-\textit{speedup} será calculado por
+\section{Comparação com uma implementação de referência}
+
+Uma implementação anterior do mesmo trabalho foi usada como referência de
+projeto. As duas soluções calculam primos-base até $\sqrt{N}$, dividem o
+intervalo entre escravos e consolidam os blocos no mestre. A
+Tabela~\ref{tab:comparacao-referencia} resume as diferenças relevantes.
+
+\begin{table}[ht]
+    \centering
+    \caption{Comparação com a implementação de referência.}
+    \label{tab:comparacao-referencia}
+    \begin{tabular}{p{0.20\textwidth}p{0.34\textwidth}p{0.36\textwidth}}
+        \toprule
+        \textbf{Aspecto} & \textbf{Referência} & \textbf{Implementação atual} \\
+        \midrule
+        Coleta MPI & Usa \texttt{MPI\_Gather} e \texttt{MPI\_Gatherv}. & Usa \texttt{MPI\_Send} e \texttt{MPI\_Recv} por rank. \\
+        Validação & Converte a entrada com \texttt{atoi}. & Usa \texttt{strtol} e verifica limites e falhas de alocação. \\
+        Medição & Inclui o cálculo dos primos-base. & Inicia após essa preparação e inclui distribuição, processamento e coleta. \\
+        Experimentos & Não possui automação de séries. & Gera CSVs, médias, \textit{speedup}, eficiência e resumo do ambiente. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+As estratégias de coleta são válidas para o particionamento adotado. A versão
+atual prioriza o controle explícito da ordem dos blocos e uma validação de
+entrada mais rigorosa. Como as regiões cronometradas são diferentes, não se
+deve comparar numericamente os tempos das duas implementações sem executá-las
+no mesmo ambiente e com a mesma metodologia.
+
+\section{Metodologia experimental}
+
+\subsection{Configurações avaliadas}
+
+Os experimentos foram automatizados pelo script
+\texttt{scripts/executar\_experimentos.sh} em um ambiente do GitHub Actions.
+Foram realizadas duas rodadas: o ambiente A utilizou dez repetições de cada
+configuração; o ambiente B, executado em uma máquina virtual com mais
+recursos, utilizou cinco repetições.
+
+Foram usados 70 valores de $N$ entre $10^3$ e $10^9$, com maior densidade de
+pontos nas transições de escala. A versão paralela foi executada com
 
 \begin{equation}
-    S(P) = \frac{T_{sequencial}}{T_{paralelo}(P)},
+    P\in\{2,3,4,6,8,12\}.
 \end{equation}
 
-em que $P$ representa a quantidade total de processos MPI. A eficiência será
-calculada por
+Como cada valor de $N$ possui uma configuração sequencial e seis paralelas, o
+total das duas rodadas foi
 
 \begin{equation}
-    E(P) = \frac{S(P)}{P}.
+    70\times(1+6)\times(10+5)=7350\text{ execuções}.
 \end{equation}
 
-Os experimentos deverão variar tanto o valor de $N$ quanto a quantidade de
-processos, permitindo observar o custo da comunicação e a capacidade de
-escalabilidade da solução.
+O ambiente A produziu 4900 medições em 7181 segundos. O ambiente B produziu
+2450 medições em 2759 segundos. Em ambos, os tempos foram positivos e as
+contagens de primos coincidiram entre as versões para todas as configurações
+de um mesmo $N$. Para $N=10^9$, por exemplo, ambas encontraram
+$50\,847\,534$ primos.
 
-Ao final de cada rodada, o valor de $N$, a quantidade de processos, a
-quantidade de primos e o tempo medido serão acrescentados ao arquivo
-correspondente. A versão sequencial utilizará
-\texttt{resultados/sequencial/execucoes.csv}, enquanto a versão paralela
-utilizará \texttt{resultados/paralelo/execucoes.csv}. Os dois arquivos terão as
-mesmas colunas, facilitando a comparação posterior. Essa gravação será
-realizada depois do encerramento do cronômetro e não fará parte do tempo de
-execução registrado.
+Durante a série, \texttt{SALVAR\_PRIMOS=0} desabilitou apenas a escrita do
+arquivo, evitando centenas de megabytes de entrada e saída repetida. A criação
+das listas, o envio pelos escravos e o recebimento pelo mestre continuaram
+fazendo parte de todas as execuções medidas.
 
-Os experimentos serão automatizados por um script que executará diferentes
-valores de $N$ e diferentes quantidades de processos. Cada configuração será
-repetida para reduzir a influência de variações ocasionais no tempo medido. O
-script compilará os programas uma única vez e acrescentará todas as rodadas aos
-arquivos de resultados, sem apagar medições anteriores.
+\subsection{Ambiente}
 
-Serão utilizados 70 valores de $N$, distribuídos entre $10^3$ e $10^9$, e
-configurações com 2, 3, 4, 6, 8 e 12 processos MPI. A quantidade de
-processadores lógicos disponíveis será detectada antes dos experimentos. As
-configurações que excederem esse valor serão mantidas com
-\textit{oversubscription}, permitindo observar o comportamento da aplicação
-quando há mais processos MPI do que unidades de processamento disponíveis.
+Os ambientes registrados automaticamente são comparados na
+Tabela~\ref{tab:ambiente}.
 
-Durante a série de desempenho, a gravação de \texttt{primos.txt} será
-desabilitada para evitar a escrita repetida de arquivos com milhões de linhas.
-Essa opção não altera o processamento medido: os primos ainda serão calculados,
-enviados pelos escravos e recebidos pelo mestre. As execuções individuais
-continuarão gerando a lista completa normalmente.
+\begin{table}[ht]
+    \centering
+    \caption{Ambientes das duas rodadas experimentais.}
+    \label{tab:ambiente}
+    \begin{tabular}{p{0.29\textwidth}p{0.28\textwidth}p{0.28\textwidth}}
+        \toprule
+        \textbf{Propriedade} & \textbf{Ambiente A} & \textbf{Ambiente B} \\
+        \midrule
+        Sistema operacional & Ubuntu 24.04.5 LTS & Ubuntu 24.04.5 LTS \\
+        Arquitetura & x86\_64 & x86\_64 \\
+        Processador & AMD EPYC 7763 & AMD EPYC 7763 \\
+        Núcleos físicos disponíveis & 1 & 2 \\
+        Processadores lógicos & 2 & 4 \\
+        Memória RAM & 7,75 GiB & 15,61 GiB \\
+        Compilador & GCC 13.3.0 & GCC 13.3.0 \\
+        MPI & Open MPI 4.1.6 & Open MPI 4.1.6 \\
+        Plataforma & GitHub Actions & GitHub Actions \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
-A série completa poderá ser executada manualmente pelo GitHub Actions. Ao final
-da execução, os arquivos CSV e um relatório em Markdown serão disponibilizados
-como artefatos. O relatório registrará o sistema operacional, o processador, a
-quantidade de núcleos físicos e lógicos, a memória, o compilador e a versão do
-MPI presentes no runner. Essas informações serão consideradas na comparação
-dos experimentos, pois o hardware dos runners hospedados pode variar entre
-execuções.
+O nome comercial do processador descreve o modelo do host, não a quantidade
+de recursos concedida à máquina virtual. No ambiente A, configurações com mais
+de dois processos utilizaram \textit{oversubscription}; no ambiente B, isso
+ocorreu acima de quatro processos. As duas rodadas usaram Open MPI 4.1.6
+\cite{openmpi}.
 
-% ==========================================
-% 7. CONCLUSÕES
-% ==========================================
+\subsection{Métricas}
 
-\section{Conclusões}
+Para cada ambiente e valor de $N$, foi calculada a média sequencial,
+$\overline{T}_{seq}(N)$. Para cada par $(N,P)$ do mesmo ambiente, foi calculada
+a média paralela, $\overline{T}_{par}(N,P)$. O \textit{speedup} e a eficiência
+foram definidos por
 
-Esta seção será completada após a implementação da versão paralela e a execução
-dos experimentos de desempenho.
+\begin{equation}
+    S(N,P)=\frac{\overline{T}_{seq}(N)}{\overline{T}_{par}(N,P)}
+\end{equation}
+
+e
+
+\begin{equation}
+    E(N,P)=\frac{S(N,P)}{P}.
+\end{equation}
+
+O denominador da eficiência é a quantidade total de processos MPI, incluindo
+o mestre. Essa escolha contabiliza todos os recursos reservados, embora apenas
+$P-1$ processos executem os blocos do crivo. Os \textit{speedups} nunca
+misturam tempos de ambientes diferentes.
+
+\section{Resultados e discussão}
+
+\subsection{Versão sequencial como referência}
+
+A versão sequencial é a referência dos experimentos. Para cada valor de $N$,
+seu tempo médio representa o custo de resolver o problema sem comunicação nem
+divisão entre processos. Esse tempo é comparado ao da versão MPI, enquanto a
+igualdade das contagens de primos verifica se ambas produziram o mesmo
+resultado.
+
+A Tabela~\ref{tab:sequencial} apresenta uma seleção das médias sequenciais.
+O crescimento torna-se aproximadamente proporcional a $N$ nos maiores
+limites, como esperado para as varreduras do vetor.
+
+\begin{table}[ht]
+    \centering
+    \caption{Tempos médios da versão sequencial nos dois ambientes.}
+    \label{tab:sequencial}
+    \begin{tabular}{rrr}
+        \toprule
+        \textbf{$N$} & \textbf{Ambiente A (s)} & \textbf{Ambiente B (s)} \\
+        \midrule
+        $1\,000$ & 0,000012255 & 0,000011190 \\
+        $1\,000\,000$ & 0,002037422 & 0,002265431 \\
+        $10\,000\,000$ & 0,018040285 & 0,020003785 \\
+        $100\,000\,000$ & 0,420699189 & 0,448634497 \\
+        $500\,000\,000$ & 2,711717681 & 2,793503071 \\
+        $1\,000\,000\,000$ & 5,628185172 & 5,687858492 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Para entradas pequenas, os tempos estão na ordem de microssegundos ou poucos
+milissegundos. Nessa região, variações muito pequenas alteram bastante o
+\textit{speedup}; por isso, os limites maiores são mais adequados para avaliar
+o efeito da paralelização.
+
+Os dados completos incluem 70 valores de $N$. Para manter a apresentação
+simples, a comparação visual foi concentrada no maior limite testado, no qual
+o custo computacional é mais representativo e o efeito da paralelização fica
+mais fácil de observar.
+
+\subsection{Comportamento da implementação paralela}
+
+A versão paralela mantém o mesmo princípio do crivo, mas divide o intervalo
+entre os escravos. O mestre calcula e distribui os primos-base, envia os
+limites dos blocos e reúne os resultados. Neste relatório, $P$ representa a
+quantidade total de processos: um mestre e $P-1$ escravos.
+
+Para entradas pequenas, dividir o intervalo não compensa os custos de iniciar
+os processos, trocar mensagens e reunir as listas. Para entradas maiores, a
+divisão passa a reduzir o tempo da própria versão MPI. Em $N=10^9$, o ambiente
+A reduz o tempo paralelo de 12,44 segundos com $P=2$ para aproximadamente
+6,87 segundos com $P=8$. No ambiente B, o tempo cai de 7,21 segundos com
+$P=2$ para 4,27 segundos com $P=12$.
+
+Essa redução mostra que a divisão do trabalho funciona. Entretanto, ela ainda
+não informa se o MPI foi mais rápido que a implementação original. Essa
+comparação é feita pelo \textit{speedup} na seção seguinte.
+
+\subsection{Comparação entre as versões: speedup}
+
+A Tabela~\ref{tab:speedups} mostra, para limites representativos, a melhor
+configuração MPI de cada ambiente. Um valor menor que 1 significa que a versão
+paralela foi mais lenta; um valor maior que 1 representa aceleração.
+
+\begin{table}[ht]
+    \centering
+    \caption{Melhor speedup de cada ambiente para valores representativos de $N$.}
+    \label{tab:speedups}
+    \begin{tabular}{rrrrr}
+        \toprule
+        \textbf{$N$} & \textbf{Melhor $P$ (A)} & \textbf{$S_A$} & \textbf{Melhor $P$ (B)} & \textbf{$S_B$} \\
+        \midrule
+        $10\,000\,000$ & 12 & 0,3664 & 4 & 0,6121 \\
+        $60\,000\,000$ & 12 & 0,7648 & 12 & 1,6223 \\
+        $100\,000\,000$ & 12 & 0,8117 & 12 & 1,4641 \\
+        $500\,000\,000$ & 4 & 0,7997 & 12 & 1,3008 \\
+        $1\,000\,000\,000$ & 8 & 0,8189 & 12 & 1,3311 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+No ambiente A, nenhuma das 420 combinações apresentou $S\geq1$; o melhor valor
+foi $0{,}873062$. No ambiente B, 103 combinações alcançaram ou superaram o
+ponto de equilíbrio. O maior valor observado foi $1{,}622326$, para
+$N=60\,000\,000$ e $P=12$. Como essa rodada possui cinco repetições, esse pico
+isolado deve ser interpretado com cautela. Nas entradas maiores, porém, os
+ganhos permaneceram: para $N=10^9$, o speedup chegou a $1{,}331056$.
+
+\subsection{Processos e processadores lógicos}
+
+A Tabela~\ref{tab:bilhao} detalha $N=10^9$ e evidencia a mudança causada pela
+maior disponibilidade de recursos no ambiente B.
+
+\begin{table}[ht]
+    \centering
+    \caption{Resultados para $N=10^9$ nos ambientes A e B.}
+    \label{tab:bilhao}
+    \begin{tabular}{rrrrr}
+        \toprule
+        \textbf{$P$} & \textbf{$T_A$ (s)} & \textbf{$S_A$} & \textbf{$T_B$ (s)} & \textbf{$S_B$} \\
+        \midrule
+        2 & 12,4385 & 0,4525 & 7,2073 & 0,7892 \\
+        3 & 7,4882 & 0,7516 & 6,6309 & 0,8578 \\
+        4 & 7,4046 & 0,7601 & 5,1869 & 1,0966 \\
+        6 & 6,8929 & 0,8165 & 4,5998 & 1,2365 \\
+        8 & 6,8730 & 0,8189 & 4,4987 & 1,2643 \\
+        12 & 6,9824 & 0,8061 & 4,2732 & 1,3311 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\graficotempos}
+    \caption{Comparação dos tempos médios dos dois ambientes para $N=10^9$;
+    $P$ representa a quantidade total de processos MPI.}
+    \label{fig:tempos}
+\end{figure}
+
+No ambiente A, somente $P=2$ não excede as duas CPUs lógicas. A versão MPI
+melhora ao receber mais escravos, mas permanece abaixo do sequencial. No
+ambiente B, $P=4$ usa a mesma quantidade de processos que CPUs lógicas e já
+alcança $S=1{,}0966$. Esse resultado é a comparação mais direta entre a
+divisão do trabalho e a disponibilidade de recursos sem
+\textit{oversubscription} por contagem de processos.
+
+Com $P\geq6$, o ambiente B também compartilha CPUs lógicas. Mesmo assim, o
+tempo continua caindo até $P=12$ para essa entrada. Isso sugere que a redução
+dos blocos ainda compensou o escalonamento adicional, mas não significa que
+mais processos sempre produzirão ganho. Como não foi fixada afinidade de CPU,
+não se pode afirmar em qual processador lógico cada processo permaneceu.
+
+\subsection{Custos que limitaram o desempenho}
+
+Os resultados são explicados principalmente pelos seguintes fatores:
+
+\begin{itemize}
+    \item o mestre coordena a execução, mas não processa um bloco;
+    \item os ambientes oferecem uma quantidade limitada de processadores
+          lógicos, e processos excedentes competem por eles;
+    \item cada escravo cria, além do crivo local, uma lista de inteiros com os
+          primos encontrados;
+    \item o mestre recebe e mantém todas essas listas antes de liberá-las;
+    \item os recebimentos são realizados em ordem de rank, de modo que um
+          escravo mais lento pode atrasar a coleta dos seguintes;
+    \item a versão sequencial percorre memória de forma simples e não paga
+          custos de mensagens, sincronização ou cópias entre processos.
+\end{itemize}
+
+Para $N=10^9$, foram encontrados $50\,847\,534$ primos. Considerando inteiros
+de quatro bytes no ambiente utilizado, somente os valores enviados ao mestre
+representam aproximadamente 194 MiB. A opção \texttt{SALVAR\_PRIMOS=0}
+remove o custo de escrita em disco, mas não remove essa comunicação. Dessa
+forma, a avaliação mede corretamente o protocolo exigido pelo trabalho e
+expõe seu custo.
+
+A comparação entre os ambientes mostra que o algoritmo não mudou, mas a
+conclusão experimental mudou. Ao dobrar de dois para quatro processadores
+lógicos, configurações a partir de $P=4$ passaram a superar a referência
+sequencial em entradas grandes. Portanto, os resultados devem sempre ser
+apresentados junto à configuração do hardware utilizado.
+
+\section{Limitações e possibilidades de melhoria}
+
+Os resultados são válidos para os dois ambientes descritos e não devem ser
+generalizados para um cluster ou para uma máquina dedicada. Os runners são
+hospedados, não houve controle de afinidade e as rodadas usaram quantidades
+diferentes de repetições. Uma avaliação futura deve reservar ao menos um
+núcleo para cada processo e repetir as medições em hardware controlado.
+
+Outras melhorias possíveis são distribuir o restante da divisão entre os
+primeiros blocos, representar apenas números ímpares, compactar as marcações
+em bits e reduzir cópias intermediárias na coleta. Operações coletivas como
+\texttt{MPI\_Gatherv} podem simplificar a consolidação, embora não eliminem o
+volume necessário para produzir a lista final.
+
+Também seria importante preservar, junto aos CSVs, a saída do
+\texttt{gprof}. No conjunto disponível, a seção de perfil pôde identificar os
+trechos de maior custo pela estrutura algorítmica, mas não comparar
+percentuais medidos entre \texttt{criar\_crivo} e
+\texttt{contar\_primos}.
+
+\section{Conclusão}
+
+Foi implementado o Crivo de Eratóstenes sequencial e uma versão paralela em C
+com MPI, no modelo mestre--escravo. A solução divide $[2,N]$ em blocos
+contínuos, distribui os primos-base por \textit{broadcast}, processa os blocos
+de forma independente e consolida as listas no mestre em ordem crescente. As
+contagens das duas versões foram consistentes nas 7350 execuções realizadas.
+
+O ambiente A, com dois processadores lógicos, não produziu aceleração sobre a
+versão sequencial. No ambiente B, com quatro processadores lógicos, a versão
+MPI passou a obter ganho em 103 combinações. Para $N=10^9$, o tempo caiu de
+5,69 segundos no sequencial para 4,27 segundos com $P=12$, resultando em
+$S=1{,}331056$.
+
+Assim, a principal conclusão é que a divisão do trabalho funciona, mas seu
+benefício depende do equilíbrio entre trabalho útil, comunicação e recursos
+disponíveis. O segundo ambiente forneceu capacidade suficiente para que esse
+ganho aparecesse em entradas grandes, enquanto o primeiro permaneceu limitado
+pela disputa entre processos.
+
+\begin{thebibliography}{9}
+
+\bibitem{enunciado}
+OLIVEIRA, Rafael Sachetto.
+\textit{Computação Paralela 2026/2: Trabalho Prático 1}.
+Universidade Federal de São João del-Rei, 2026.
+
+\bibitem{mpi41}
+MESSAGE PASSING INTERFACE FORUM.
+\textit{MPI: A Message-Passing Interface Standard, Version 4.1}.
+2023. Disponível em:
+\url{https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report.pdf}.
+Acesso em: 19 out. 2026.
+
+\bibitem{gprof}
+FREE SOFTWARE FOUNDATION.
+\textit{GNU gprof: Profiling a Program --- Where Does It Spend Its Time?}.
+Disponível em: \url{https://sourceware.org/binutils/docs/gprof.html}.
+Acesso em: 19 out. 2026.
+
+\bibitem{openmpi}
+OPEN MPI PROJECT.
+\textit{Open MPI 4.1 Documentation}.
+Disponível em: \url{https://docs.open-mpi.org/en/v4.1.x/}.
+Acesso em: 19 out. 2026.
+
+\end{thebibliography}
 
 \end{document}

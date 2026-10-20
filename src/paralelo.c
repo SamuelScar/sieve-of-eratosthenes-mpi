@@ -26,11 +26,11 @@ enum TagMensagem {
  */
 static int ler_limite(const char *valor)
 {
-    char *fim;
-    long limite = strtol(valor, &fim, 10);
+    char *fim_conversao;
+    long limite = strtol(valor, &fim_conversao, 10);
 
     const bool limite_invalido =
-        *valor == '\0' || *fim != '\0' || limite < 2 || limite > INT_MAX;
+        *valor == '\0' || *fim_conversao != '\0' || limite < 2 || limite > INT_MAX;
 
     return limite_invalido ? -1 : (int)limite;
 }
@@ -87,7 +87,7 @@ static void abortar_execucao(int rank, const char *mensagem)
  *
  * @return A lista de primos ou NULL quando a alocacao falhar.
  */
-static int *calcular_primos_base(int limite, int *quantidade_primos)
+static int *calcular_primos_base(int limite, int *quantidade_primos_base)
 {
     const int limite_base = (int)sqrt((double)limite);
     bool *compostos = calloc((size_t)limite_base + 1, sizeof(*compostos));
@@ -110,7 +110,7 @@ static int *calcular_primos_base(int limite, int *quantidade_primos)
 
     for (int numero = 2; numero <= limite_base; numero++) {
         if (!compostos[numero])
-            primos[(*quantidade_primos)++] = numero;
+            primos[(*quantidade_primos_base)++] = numero;
     }
 
     free(compostos);
@@ -124,13 +124,13 @@ static int preparar_primos_base(
     int rank,
     int limite,
     int **primos_base,
-    int *quantidade_primos
+    int *quantidade_primos_base
 )
 {
     int status = EXIT_SUCCESS;
 
     if (rank == RANK_MESTRE) {
-        *primos_base = calcular_primos_base(limite, quantidade_primos);
+        *primos_base = calcular_primos_base(limite, quantidade_primos_base);
 
         if (*primos_base == NULL) {
             fprintf(stderr, "Nao foi possivel calcular os primos-base.\n");
@@ -148,13 +148,15 @@ static int preparar_primos_base(
 static void distribuir_primos_base(
     int rank,
     int **primos_base,
-    int *quantidade_primos
+    int *quantidade_primos_base
 )
 {
-    MPI_Bcast(quantidade_primos, 1, MPI_INT, RANK_MESTRE, MPI_COMM_WORLD);
+    MPI_Bcast(quantidade_primos_base, 1, MPI_INT, RANK_MESTRE, MPI_COMM_WORLD);
 
-    if (rank != RANK_MESTRE && *quantidade_primos > 0) {
-        *primos_base = malloc((size_t)*quantidade_primos * sizeof(**primos_base));
+    if (rank != RANK_MESTRE && *quantidade_primos_base > 0) {
+        *primos_base = malloc(
+            (size_t)*quantidade_primos_base * sizeof(**primos_base)
+        );
 
         if (*primos_base == NULL)
             abortar_execucao(rank, "Nao foi possivel receber os primos-base.");
@@ -162,7 +164,7 @@ static void distribuir_primos_base(
 
     MPI_Bcast(
         *primos_base,
-        *quantidade_primos,
+        *quantidade_primos_base,
         MPI_INT,
         RANK_MESTRE,
         MPI_COMM_WORLD
@@ -347,23 +349,23 @@ static void executar_escravo(
  */
 static int **receber_resultados(
     int quantidade_processos,
-    int **quantidades_primos
+    int **quantidades_por_escravo
 )
 {
     const int quantidade_escravos = quantidade_processos - 1;
-    int **listas_primos = calloc(
+    int **primos_por_escravo = calloc(
         (size_t)quantidade_escravos,
-        sizeof(*listas_primos)
+        sizeof(*primos_por_escravo)
     );
 
-    *quantidades_primos = calloc(
+    *quantidades_por_escravo = calloc(
         (size_t)quantidade_escravos,
-        sizeof(**quantidades_primos)
+        sizeof(**quantidades_por_escravo)
     );
 
-    if (listas_primos == NULL || *quantidades_primos == NULL) {
-        free(listas_primos);
-        free(*quantidades_primos);
+    if (primos_por_escravo == NULL || *quantidades_por_escravo == NULL) {
+        free(primos_por_escravo);
+        free(*quantidades_por_escravo);
         abortar_execucao(RANK_MESTRE, "Nao foi possivel receber os resultados.");
     }
 
@@ -371,7 +373,7 @@ static int **receber_resultados(
         const int indice = rank - 1;
 
         MPI_Recv(
-            &(*quantidades_primos)[indice],
+            &(*quantidades_por_escravo)[indice],
             1,
             MPI_INT,
             rank,
@@ -380,21 +382,21 @@ static int **receber_resultados(
             MPI_STATUS_IGNORE
         );
 
-        const int quantidade = (*quantidades_primos)[indice];
+        const int quantidade_recebida = (*quantidades_por_escravo)[indice];
 
-        if (quantidade == 0)
+        if (quantidade_recebida == 0)
             continue;
 
-        listas_primos[indice] = malloc(
-            (size_t)quantidade * sizeof(*listas_primos[indice])
+        primos_por_escravo[indice] = malloc(
+            (size_t)quantidade_recebida * sizeof(*primos_por_escravo[indice])
         );
 
-        if (listas_primos[indice] == NULL)
+        if (primos_por_escravo[indice] == NULL)
             abortar_execucao(RANK_MESTRE, "Nao foi possivel armazenar os resultados.");
 
         MPI_Recv(
-            listas_primos[indice],
-            quantidade,
+            primos_por_escravo[indice],
+            quantidade_recebida,
             MPI_INT,
             rank,
             TAG_LISTA_PRIMOS,
@@ -403,7 +405,7 @@ static int **receber_resultados(
         );
     }
 
-    return listas_primos;
+    return primos_por_escravo;
 }
 
 static int criar_diretorio_resultados(void)
@@ -434,8 +436,8 @@ static bool deve_salvar_primos(void)
  * Escreve a lista final de primos, mantendo a ordem dos blocos.
  */
 static int salvar_primos(
-    int **listas_primos,
-    const int *quantidades_primos,
+    int **primos_por_escravo,
+    const int *quantidades_por_escravo,
     int quantidade_escravos
 )
 {
@@ -450,8 +452,14 @@ static int salvar_primos(
     }
 
     for (int indice = 0; indice < quantidade_escravos; indice++) {
-        for (int primo = 0; primo < quantidades_primos[indice]; primo++) {
-            if (fprintf(arquivo, "%d\n", listas_primos[indice][primo]) < 0) {
+        for (
+            int indice_primo = 0;
+            indice_primo < quantidades_por_escravo[indice];
+            indice_primo++
+        ) {
+            const int primo = primos_por_escravo[indice][indice_primo];
+
+            if (fprintf(arquivo, "%d\n", primo) < 0) {
                 fclose(arquivo);
                 fprintf(stderr, "Nao foi possivel escrever em %s.\n", ARQUIVO_PRIMOS);
                 return EXIT_FAILURE;
@@ -530,16 +538,16 @@ static int registrar_resultado(
 }
 
 static void liberar_resultados(
-    int **listas_primos,
-    int *quantidades_primos,
+    int **primos_por_escravo,
+    int *quantidades_por_escravo,
     int quantidade_escravos
 )
 {
     for (int indice = 0; indice < quantidade_escravos; indice++)
-        free(listas_primos[indice]);
+        free(primos_por_escravo[indice]);
 
-    free(listas_primos);
-    free(quantidades_primos);
+    free(primos_por_escravo);
+    free(quantidades_por_escravo);
 }
 
 /**
@@ -555,24 +563,24 @@ static int executar_mestre(
 
     distribuir_intervalos(quantidade_processos, limite);
 
-    int *quantidades_primos = NULL;
-    int **listas_primos = receber_resultados(
+    int *quantidades_por_escravo = NULL;
+    int **primos_por_escravo = receber_resultados(
         quantidade_processos,
-        &quantidades_primos
+        &quantidades_por_escravo
     );
 
     const double tempo_execucao = MPI_Wtime() - inicio_tempo;
     int quantidade_total = 0;
 
     for (int indice = 0; indice < quantidade_escravos; indice++)
-        quantidade_total += quantidades_primos[indice];
+        quantidade_total += quantidades_por_escravo[indice];
 
     int status = EXIT_SUCCESS;
 
     if (deve_salvar_primos()) {
         status = salvar_primos(
-            listas_primos,
-            quantidades_primos,
+            primos_por_escravo,
+            quantidades_por_escravo,
             quantidade_escravos
         );
     }
@@ -590,8 +598,8 @@ static int executar_mestre(
     }
 
     liberar_resultados(
-        listas_primos,
-        quantidades_primos,
+        primos_por_escravo,
+        quantidades_por_escravo,
         quantidade_escravos
     );
 
@@ -634,7 +642,7 @@ int main(int argc, char *argv[])
     if (status == EXIT_SUCCESS) {
         MPI_Barrier(MPI_COMM_WORLD);
 
-        const double inicio_tempo = rank == RANK_MESTRE ? MPI_Wtime() : 0.0;
+        const double inicio = rank == RANK_MESTRE ? MPI_Wtime() : 0.0;
 
         distribuir_primos_base(
             rank,
@@ -643,7 +651,7 @@ int main(int argc, char *argv[])
         );
 
         if (rank == RANK_MESTRE)
-            status = executar_mestre(limite, quantidade_processos, inicio_tempo);
+            status = executar_mestre(limite, quantidade_processos, inicio);
         else
             executar_escravo(rank, primos_base, quantidade_primos_base);
 
