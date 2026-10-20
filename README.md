@@ -1,141 +1,130 @@
-# crivo-eratostenes-mpi
+# Crivo de Eratóstenes com MPI
 
 Implementações sequencial e paralela do Crivo de Eratóstenes em C. A versão
-paralela utiliza OpenMPI e o modelo mestre-escravo para dividir o intervalo em
-blocos contínuos.
+paralela utiliza Open MPI no modelo mestre-escravo e divide o intervalo
+`[2, N]` em blocos contínuos.
 
-## Requisitos
+## Execução rápida
 
-- Docker
-- Docker Compose
+### Linux com Open MPI
 
-## Preparação do ambiente
-
-Construa a imagem de desenvolvimento:
+No Ubuntu, instale as dependências:
 
 ```bash
-docker compose build
+sudo apt update
+sudo apt install -y gcc make libopenmpi-dev openmpi-bin
 ```
 
-Os arquivos do repositório são montados em `/workspace` no container. Assim,
-alterações feitas localmente em `src/` ficam disponíveis imediatamente dentro
-do ambiente Docker.
-
-Para abrir um terminal no container:
+Compile as duas versões:
 
 ```bash
-docker compose run --rm dev
+make
 ```
-
-## Compilação
-
-Compile as versões sequencial e paralela:
-
-```bash
-docker compose run --rm dev make
-```
-
-Os executáveis são gerados na pasta `bin/`.
 
 Execute a versão sequencial:
 
 ```bash
-docker compose run --rm dev make run-sequential N=100
+make run-sequential N=100
 ```
 
-Execute a versão paralela com quatro processos, sendo um mestre e três
-escravos:
+Execute a versão paralela com quatro processos:
 
 ```bash
+make run NP=4 N=100
+```
+
+`N` é o limite até o qual os números primos serão procurados. `NP` é a
+quantidade total de processos MPI: um mestre e `NP - 1` escravos.
+
+### Docker
+
+Como alternativa, o projeto possui uma imagem com todas as dependências:
+
+```bash
+docker compose build
+docker compose run --rm dev make
+```
+
+Execute as versões pelos mesmos alvos do `Makefile`:
+
+```bash
+docker compose run --rm dev make run-sequential N=100
 docker compose run --rm dev make run NP=4 N=100
 ```
 
-A versão paralela grava os números primos encontrados no arquivo
-`resultados/paralelo/primos.txt`, com um número por linha.
+## Funcionamento
 
-## Resultados
+A versão sequencial cria um único crivo, marca os números compostos e conta os
+primos encontrados.
 
-Cada execução acrescenta uma linha ao arquivo correspondente:
+Na versão paralela, o processo mestre:
 
-- `resultados/sequencial/execucoes.csv` para a versão sequencial;
-- `resultados/paralelo/execucoes.csv` para a versão paralela.
+- calcula os primos-base até `sqrt(N)`;
+- divide o intervalo entre os escravos;
+- distribui os dados e recebe os resultados;
+- reúne os primos na ordem correta.
 
-Os dois arquivos utilizam as mesmas colunas:
+Cada escravo processa somente o bloco recebido. Ao final, o programa mostra a
+quantidade de primos e o tempo de execução.
 
-- limite;
-- quantidade de processos;
-- quantidade de primos;
-- tempo em segundos.
+## Arquivos gerados
 
-A gravação dos arquivos acontece depois da medição e, portanto, não interfere
-no tempo registrado.
+Cada execução acrescenta seus resultados aos arquivos:
 
-## Experimentos
+- `resultados/sequencial/execucoes.csv`;
+- `resultados/paralelo/execucoes.csv`.
 
-O script `scripts/executar_experimentos.sh` compila os programas e executa uma
-série de experimentos. Por padrão, são utilizadas cinco repetições para cada
-combinação de 70 limites entre `1000` e `1000000000` com as seguintes
-quantidades de processos MPI:
+A versão paralela também grava a lista completa em
+`resultados/paralelo/primos.txt`, com um primo por linha. Os arquivos são
+gravados depois da medição do tempo.
 
-```text
-2, 3, 4, 6, 8 e 12 processos
-```
+Os executáveis são criados em `bin/`:
 
-O conjunto padrão totaliza 2450 execuções. O script detecta a quantidade de
-processadores lógicos disponíveis e avisa quando uma configuração utiliza
-oversubscription, mas mantém a execução para permitir a análise desse
-comportamento.
+- `bin/sequencial`;
+- `bin/paralelo`.
 
-Execute a série padrão dentro do container:
+## Série de experimentos
+
+O script abaixo compila os programas e executa a série completa usada no
+relatório:
 
 ```bash
-docker compose run --rm dev bash scripts/executar_experimentos.sh
+bash scripts/executar_experimentos.sh
 ```
 
-Os valores podem ser personalizados por variáveis de ambiente:
+A configuração padrão utiliza 70 limites, seis quantidades de processos e
+cinco repetições, totalizando 2450 execuções. Para uma verificação menor, use:
 
 ```bash
-docker compose run --rm \
-  -e LIMITES="1000000 10000000" \
-  -e PROCESSOS="2 4" \
-  -e REPETICOES=3 \
-  dev bash scripts/executar_experimentos.sh
+LIMITES="1000 10000" PROCESSOS="2 4" REPETICOES=1 \
+  bash scripts/executar_experimentos.sh
 ```
 
-O script acrescenta novas linhas aos CSVs existentes e não remove resultados
-de execuções anteriores. Ao final, também gera
-`resultados/resumo_execucao.md`, contendo o hardware utilizado, a duração total,
-as médias, os speedups e as eficiências calculadas.
+Durante a série, a gravação de `primos.txt` fica desabilitada para evitar
+arquivos muito grandes. O cálculo e a comunicação dos primos continuam sendo
+realizados. Para manter o arquivo, defina `SALVAR_PRIMOS=1`.
 
-Para evitar a gravação repetida de arquivos com milhões de linhas, o script não
-gera `primos.txt` por padrão. Esse comportamento afeta somente a saída em disco,
-pois os primos continuam sendo calculados e enviados ao mestre. Para manter a
-lista durante os experimentos no Docker, acrescente `-e SALVAR_PRIMOS=1` ao
-comando. As execuções individuais com `make run` continuam gerando o arquivo
-normalmente.
+Ao final, o script gera `resultados/resumo_execucao.md` com informações do
+ambiente, tempos médios, speedup e eficiência.
 
 ## GitHub Actions
 
-O workflow `Experimentos MPI` pode ser iniciado manualmente na aba
-`Actions`. Os limites, as quantidades de processos e o número de repetições
-podem ser alterados antes da execução.
+O workflow **Experimentos MPI** pode ser iniciado manualmente na aba
+**Actions**. Antes da execução, é possível informar os limites, as quantidades
+de processos e o número de repetições.
 
-Ao terminar, o workflow:
+O resumo é exibido na própria execução e os CSVs ficam disponíveis como
+artefato por 30 dias.
 
-- apresenta o relatório na página de resumo da execução;
-- disponibiliza os CSVs e o relatório como um artefato por 30 dias;
-- registra processador, núcleos, memória, sistema operacional, compilador e
-  versão do MPI utilizados pelo runner.
+## Relatório
 
-O arquivo `primos.txt` não é gerado na série padrão nem enviado como artefato,
-pois pode ocupar centenas de megabytes nos maiores limites. Os runners
-hospedados podem variar entre execuções, portanto comparações diretas devem
-considerar o hardware registrado em cada relatório.
+O relatório técnico está em `docs/relatorio.tex`. A imagem utilizada por ele
+está em `docs/imagens/`.
 
 ## Limpeza
 
-Remova binários e dados gerados pelo profiling:
+Remova os executáveis e o arquivo de perfil, caso exista:
 
 ```bash
-docker compose run --rm dev make clean
+make clean
 ```
